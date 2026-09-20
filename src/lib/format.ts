@@ -28,6 +28,8 @@ export function formatDuration(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+export const ASSET_STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
+
 const STATUS_LABELS: Record<AssetStatus, string> = {
   draft: 'Draft',
   in_review: 'In review',

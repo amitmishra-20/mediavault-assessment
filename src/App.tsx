@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
-import { AssetGrid } from '@/features/assets/AssetGrid';
-import { useAssets } from '@/features/assets/useAssets';
+import { AssetFeed } from '@/features/assets/AssetFeed';
+import { useAssetFilters } from '@/features/assets/useAssetFilters';
 import { statusLabel } from '@/lib/format';
-import type { Asset, AssetStatus, AssetQuery } from '@/lib/types';
+import { apiMessage } from '@/lib/errors';
+import type { Asset, AssetStatus } from '@/lib/types';
 
 const STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
-const SORTS: Array<{ value: NonNullable<AssetQuery['sort']>; label: string }> = [
+const SORTS: Array<{ value: string; label: string }> = [
   { value: 'updatedAt:desc', label: 'Recently updated' },
   { value: 'name:asc', label: 'Name A–Z' },
   { value: 'sizeBytes:desc', label: 'Largest first' },
@@ -15,41 +16,29 @@ const SORTS: Array<{ value: NonNullable<AssetQuery['sort']>; label: string }> = 
 ];
 
 export function App() {
-  const [q, setQ] = useState('');
-  const [status, setStatus] = useState<AssetStatus[]>([]);
-  const [sort, setSort] = useState<NonNullable<AssetQuery['sort']>>('updatedAt:desc');
+  const { input, setInput, q, status, toggleStatus, sort, setSort } = useAssetFilters();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  // Every keystroke sends a request. Nothing is debounced or cancelled.
-  const { items, total, loading, error } = useAssets({ q, status, sort, limit: 24 });
-
-  function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   async function applyBulkStatus(next: AssetStatus) {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     setNotice(null);
     try {
-      // Sends every selected id in one call, which the API refuses above 50.
       const result = await bulkSetStatus(ids, next);
-      setNotice(`${result.applied} updated, ${result.failed} failed.`);
+      setNotice({
+        kind: result.failed > 0 ? 'error' : 'ok',
+        text: `${result.applied} updated, ${result.failed} failed.`,
+      });
       setSelectedIds(new Set());
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Bulk update failed');
+      setNotice({ kind: 'error', text: apiMessage(err) });
     }
   }
 
-  function handleSaved(_asset: Asset) {
-    // The list is not told that anything changed, so it shows stale rows.
+  function handleSaved(asset: Asset) {
+    setNotice({ kind: 'ok', text: `${asset.name} → ${statusLabel(asset.status)}` });
   }
 
   return (
@@ -60,10 +49,15 @@ export function App() {
           className="search"
           type="search"
           placeholder="Search assets"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          aria-label="Search assets"
         />
-        <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as typeof sort)}
+          aria-label="Sort order"
+        >
           {SORTS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -78,18 +72,11 @@ export function App() {
             <input
               type="checkbox"
               checked={status.includes(s)}
-              onChange={(e) =>
-                setStatus((prev) =>
-                  e.target.checked ? [...prev, s] : prev.filter((x) => x !== s),
-                )
-              }
+              onChange={() => toggleStatus(s)}
             />
             {statusLabel(s)}
           </label>
         ))}
-        <span className="muted">
-          {loading ? 'Loading…' : `${items.length} of ${total.toLocaleString()} shown`}
-        </span>
       </div>
 
       {selectedIds.size > 0 && (
@@ -104,15 +91,25 @@ export function App() {
         </div>
       )}
 
-      {notice && <p className="notice">{notice}</p>}
-      {error && <p className="error">{error}</p>}
+      {notice && (
+        <p className={`notice notice--${notice.kind}`} role="status">
+          {notice.text}
+        </p>
+      )}
 
       <main className="content">
-        <AssetGrid
-          assets={items}
+        <AssetFeed
+          query={{ q, status, sort }}
           selectedIds={selectedIds}
           activeId={activeId}
-          onToggleSelect={toggleSelect}
+          onToggleSelect={(id) =>
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
           onOpen={setActiveId}
         />
         {activeId && (

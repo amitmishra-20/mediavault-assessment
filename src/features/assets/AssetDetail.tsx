@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { getAsset, thumbnailUrl, updateAsset } from '@/api/client';
 import { formatBytes, formatDate, formatDuration, statusLabel } from '@/lib/format';
+import { apiMessage } from '@/lib/errors';
+import { withRetry } from '@/lib/retry';
 import type { Asset, AssetStatus } from '@/lib/types';
 
 const STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
@@ -25,7 +27,7 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
     setError(null);
     getAsset(id)
       .then(setAsset)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Load failed'));
+      .catch((err: unknown) => setError(apiMessage(err)));
   }, [id]);
 
   async function setStatus(status: AssetStatus) {
@@ -33,11 +35,12 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateAsset(asset.id, asset.version, { status });
+      // 500 write_failed and network failures are safe to repeat; 409/400 are not.
+      const updated = await withRetry(() => updateAsset(asset.id, asset.version, { status }));
       setAsset(updated);
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(apiMessage(err));
     } finally {
       setSaving(false);
     }
