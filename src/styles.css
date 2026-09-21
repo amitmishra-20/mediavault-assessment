@@ -388,6 +388,11 @@ button:disabled {
   color: var(--danger);
 }
 
+.notice--offline {
+  color: var(--danger);
+  background: #fdf3f4;
+}
+
 @media (max-width: 720px) {
   .content {
     flex-direction: column;

@@ -5,6 +5,7 @@ import { AssetFeed } from '@/features/assets/AssetFeed';
 import { useAssetFilters } from '@/features/assets/useAssetFilters';
 import { useAssetUi } from '@/features/assets/store';
 import { applyBulkStatus, patchCacheAsset, type BulkOutcome } from '@/features/assets/bulk';
+import { ConnectivityBanner } from '@/lib/connectivity';
 import { statusLabel } from '@/lib/format';
 import { apiMessage } from '@/lib/errors';
 import type { Asset, AssetStatus } from '@/lib/types';
@@ -161,6 +162,8 @@ export function App() {
           {notice.text}
         </p>
       )}
+
+      <ConnectivityBanner />
 
       <main className="content">
         <AssetFeed query={{ q, status, sort }} />

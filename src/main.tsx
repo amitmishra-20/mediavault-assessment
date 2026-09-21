@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/errors';
 import { backoffMs, shouldRetry } from '@/lib/retry';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { App } from './App';
 import './styles.css';
 
@@ -29,7 +30,9 @@ createRoot(container).render(
   <StrictMode>
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
       </QueryClientProvider>
     </BrowserRouter>
   </StrictMode>,
