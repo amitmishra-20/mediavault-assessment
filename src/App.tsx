@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetFeed } from '@/features/assets/AssetFeed';
@@ -96,6 +96,17 @@ export function App() {
     setNotice({ kind: 'ok', text: `${asset.name} → ${statusLabel(asset.status)}` });
   }
 
+  // When the detail panel closes, hand keyboard focus back to the card that
+  // opened it — otherwise the keyboard drops out of the grid entirely.
+  const previousActiveRef = useRef<string | null>(activeId);
+  useEffect(() => {
+    const previous = previousActiveRef.current;
+    if (previous !== null && activeId === null) {
+      useAssetUi.getState().setFocus(previous);
+    }
+    previousActiveRef.current = activeId;
+  }, [activeId]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -164,6 +175,11 @@ export function App() {
       )}
 
       <ConnectivityBanner />
+
+      {/* Screen-reader announcement of selection changes (grid keyboard users). */}
+      <p className="sr-only" aria-live="polite">
+        {selectedCount > 0 ? `${selectedCount} selected` : 'Selection cleared'}
+      </p>
 
       <main className="content">
         <AssetFeed query={{ q, status, sort }} />

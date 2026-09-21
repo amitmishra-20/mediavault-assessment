@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from '@/App';
@@ -118,6 +118,6 @@ describe('virtualized grid', () => {
       fireEvent.click(checkbox!);
     });
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    expect(document.querySelector('.bulkbar')?.textContent).toContain('1 selected');
   });
 });
