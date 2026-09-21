@@ -181,6 +181,10 @@ button:disabled {
 .card--active {
   border-color: var(--ink);
 }
+.card--pending .pill {
+  outline: 1px dashed var(--accent);
+  outline-offset: 1px;
+}
 .card__thumb {
   display: block;
   width: 100%;

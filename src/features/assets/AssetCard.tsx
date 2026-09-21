@@ -33,9 +33,16 @@ export const AssetCard = memo(function AssetCard({ asset }: { asset: Asset }) {
   const active = useAssetUi((s) => s.activeId === asset.id);
   const toggle = useAssetUi((s) => s.toggle);
   const open = useAssetUi((s) => s.open);
+  // Optimistic status while a bulk write is in flight (undefined once settled).
+  const overlayStatus = useAssetUi((s) => s.overlay.get(asset.id));
+  const status = overlayStatus ?? asset.status;
+  const pending = overlayStatus !== undefined;
 
   const className =
-    'card' + (selected ? ' card--selected' : '') + (active ? ' card--active' : '');
+    'card' +
+    (selected ? ' card--selected' : '') +
+    (active ? ' card--active' : '') +
+    (pending ? ' card--pending' : '');
 
   return (
     <button
@@ -43,7 +50,7 @@ export const AssetCard = memo(function AssetCard({ asset }: { asset: Asset }) {
       className={className}
       onClick={() => open(asset.id)}
       aria-pressed={selected}
-      aria-label={`${asset.name}, ${statusLabel(asset.status)}`}
+      aria-label={`${asset.name}, ${statusLabel(status)}${pending ? ', updating' : ''}`}
     >
       <Thumb asset={asset} />
       <div className="card__body">
@@ -51,7 +58,7 @@ export const AssetCard = memo(function AssetCard({ asset }: { asset: Asset }) {
         <p className="muted card__meta">
           {asset.kind} · {formatBytes(asset.sizeBytes)} · {formatDate(asset.updatedAt)}
         </p>
-        <span className={`pill pill--${asset.status}`}>{statusLabel(asset.status)}</span>
+        <span className={`pill pill--${status}`}>{statusLabel(status)}</span>
       </div>
       <input
         type="checkbox"

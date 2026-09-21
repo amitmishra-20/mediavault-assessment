@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { bulkSetStatus } from '@/api/client';
+import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetFeed } from '@/features/assets/AssetFeed';
 import { useAssetFilters } from '@/features/assets/useAssetFilters';
 import { useAssetUi } from '@/features/assets/store';
+import { applyBulkStatus, patchCacheAsset, type BulkOutcome } from '@/features/assets/bulk';
 import { statusLabel } from '@/lib/format';
 import { apiMessage } from '@/lib/errors';
 import type { Asset, AssetStatus } from '@/lib/types';
@@ -16,31 +17,81 @@ const SORTS: Array<{ value: string; label: string }> = [
   { value: 'createdAt:desc', label: 'Newest' },
 ];
 
+interface UndoState {
+  ids: string[];
+  previous: Map<string, AssetStatus>;
+}
+
 export function App() {
+  const queryClient = useQueryClient();
   const { input, setInput, q, status, toggleStatus, sort, setSort } = useAssetFilters();
   const selectedCount = useAssetUi((s) => s.selected.size);
   const activeId = useAssetUi((s) => s.activeId);
   const clearSelection = useAssetUi((s) => s.clear);
   const closeDetail = useAssetUi((s) => s.close);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  // Undo remembers the state *before* a bulk write, so it survives that write.
+  const undoRef = useRef<UndoState | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  async function applyBulkStatus(next: AssetStatus) {
-    const ids = [...useAssetUi.getState().selected];
-    if (ids.length === 0) return;
+  async function runBulk(ids: string[], next: AssetStatus): Promise<BulkOutcome | null> {
     setNotice(null);
+    setBusy(true);
     try {
-      const result = await bulkSetStatus(ids, next);
-      setNotice({
-        kind: result.failed > 0 ? 'error' : 'ok',
-        text: `${result.applied} updated, ${result.failed} failed.`,
-      });
-      clearSelection();
+      return await applyBulkStatus(queryClient, ids, next);
     } catch (err) {
       setNotice({ kind: 'error', text: apiMessage(err) });
+      return null;
+    } finally {
+      setBusy(false);
     }
   }
 
+  async function applyBulk(next: AssetStatus) {
+    const ids = [...useAssetUi.getState().selected];
+    if (ids.length === 0 || busy) return;
+    const result = await runBulk(ids, next);
+    if (!result) return;
+    const { appliedIds, failed, previous } = result;
+    const text = failed.length === 0
+      ? `${appliedIds.length} updated to ${statusLabel(next).toLowerCase()}.`
+      : `${appliedIds.length} updated, ${failed.length} failed. ${failed[0]?.code ?? ''}`;
+    setNotice({ kind: failed.length > 0 ? 'error' : 'ok', text });
+    if (appliedIds.length > 0) undoRef.current = { ids: appliedIds, previous };
+    clearSelection();
+  }
+
+  async function undoLastBulk() {
+    const undo = undoRef.current;
+    if (!undo || busy) return;
+    undoRef.current = null;
+    // One bulk pass per distinct previous status (usually a single group).
+    const byStatus = new Map<AssetStatus, string[]>();
+    for (const id of undo.ids) {
+      const prev = undo.previous.get(id);
+      if (prev) {
+        const list = byStatus.get(prev) ?? [];
+        list.push(id);
+        byStatus.set(prev, list);
+      }
+    }
+    let updated = 0;
+    let failed = 0;
+    for (const [prev, ids] of byStatus) {
+      const result = await runBulk(ids, prev);
+      if (result) {
+        updated += result.appliedIds.length;
+        failed += result.failed.length;
+      }
+    }
+    setNotice({
+      kind: failed > 0 ? 'error' : 'ok',
+      text: `Undo complete: ${updated} restored, ${failed} failed.`,
+    });
+  }
+
   function handleSaved(asset: Asset) {
+    patchCacheAsset(queryClient, asset);
     setNotice({ kind: 'ok', text: `${asset.name} → ${statusLabel(asset.status)}` });
   }
 
@@ -84,14 +135,25 @@ export function App() {
 
       {selectedCount > 0 && (
         <div className="bulkbar">
-          <span>{selectedCount} selected</span>
+          {busy && <span>Applying…</span>}
+          <span>
+            {selectedCount} selected
+          </span>
           {STATUSES.map((s) => (
-            <button key={s} onClick={() => applyBulkStatus(s)}>
+            <button key={s} onClick={() => applyBulk(s)} disabled={busy}>
               Set {statusLabel(s).toLowerCase()}
             </button>
           ))}
-          <button onClick={() => clearSelection()}>Clear selection</button>
+          <button onClick={() => clearSelection()} disabled={busy}>
+            Clear selection
+          </button>
         </div>
+      )}
+
+      {!busy && undoRef.current && (
+        <button className="undo" onClick={() => undoLastBulk()} type="button">
+          Undo last change
+        </button>
       )}
 
       {notice && (
