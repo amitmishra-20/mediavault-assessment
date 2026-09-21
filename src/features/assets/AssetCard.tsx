@@ -23,16 +23,7 @@ function Thumb({ asset }: { asset: Asset }) {
   );
 }
 
-/**
- * One asset card. Subscribes to its own selection + active flags through the
- * store, and is memoised so that appending a page or toggling another card
- * does not re-render it (asset objects are stable references across pages).
- *
- * Keyboard model: the grid is a single-tab-stop (roving tabindex). Exactly one
- * card is `tabindex=0` — the focused one, or the first card while nothing is
- * focused — and every other card is `-1`; arrows steer focus, shift+arrows
- * select runs, Enter/Space open the detail panel.
- */
+/** Memoised card, per-card store subscription; roving-tabindex (one tab stop), arrows/focus-run selection. */
 export const AssetCard = memo(function AssetCard({ asset, lead }: { asset: Asset; lead: boolean }) {
   const selected = useAssetUi((s) => s.selected.has(asset.id));
   const active = useAssetUi((s) => s.activeId === asset.id);
@@ -47,7 +38,8 @@ export const AssetCard = memo(function AssetCard({ asset, lead }: { asset: Asset
   const pending = overlayStatus !== undefined;
 
   const className =
-    'card' +
+    'card card--' +
+    status +
     (selected ? ' card--selected' : '') +
     (active ? ' card--active' : '') +
     (pending ? ' card--pending' : '') +
@@ -67,7 +59,10 @@ export const AssetCard = memo(function AssetCard({ asset, lead }: { asset: Asset
       aria-pressed={selected}
       aria-label={`${asset.name}, ${statusLabel(status)}${pending ? ', updating' : ''}`}
     >
-      <Thumb asset={asset} />
+      <div className="card__img">
+        <Thumb asset={asset} />
+        <span className="card__kind">{asset.kind}</span>
+      </div>
       <div className="card__body">
         <p className="card__name">{asset.name}</p>
         <p className="muted card__meta">
@@ -83,7 +78,6 @@ export const AssetCard = memo(function AssetCard({ asset, lead }: { asset: Asset
         onClick={(e) => e.stopPropagation()}
         onChange={() => toggle(asset.id)}
         aria-label={`Select ${asset.name}`}
-        aria-hidden={selected ? undefined : 'true'}
       />
     </button>
   );
