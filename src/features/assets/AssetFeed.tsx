@@ -1,17 +1,36 @@
+import { memo, useCallback, useEffect, useRef } from 'react';
 import { AssetGrid } from './AssetGrid';
+import { useAssetUi } from './store';
 import { useAssetFeed, type FeedQuery } from './useAssetFeed';
 
 interface Props {
   query: FeedQuery;
-  selectedIds: Set<string>;
-  activeId: string | null;
-  onToggleSelect: (id: string) => void;
-  onOpen: (id: string) => void;
 }
 
 /** Owns the query and renders one of: loading, error, empty, or the grid. */
-export function AssetFeed({ query, selectedIds, activeId, onToggleSelect, onOpen }: Props) {
-  const { items, total, errorMessage, isPending, isError, isFetching, refetch } = useAssetFeed(query);
+export const AssetFeed = memo(function AssetFeed({ query }: Props) {
+  const {
+    items,
+    total,
+    errorMessage,
+    isPending,
+    isError,
+    isFetching,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useAssetFeed(query);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Filter change: reset scroll to top and the roving focus cell.
+  useEffect(() => {
+    scrollRef.current?.scrollTo?.({ top: 0 });
+    useAssetUi.getState().resetNavigation();
+  }, [query.q, query.status?.join(','), query.sort]);
+
+  const onNearEnd = useCallback(() => {
+    if (hasNextPage && !isFetching) void fetchNextPage();
+  }, [hasNextPage, isFetching, fetchNextPage]);
 
   if (isPending) {
     return (
@@ -51,23 +70,17 @@ export function AssetFeed({ query, selectedIds, activeId, onToggleSelect, onOpen
 
   return (
     <div className="feed">
-      <p className="feed__caption muted" role="status" aria-live="polite">
-        {items.length} of {total.toLocaleString()} shown
-        {isFetching ? ' — searching…' : ''}
-      </p>
       {isError && (
         <p className="state state--inline" role="alert">
-          {errorMessage} <button onClick={() => void refetch()}>Retry</button>
+          {errorMessage}{' '}
+          <button onClick={() => void refetch()}>Retry</button>
         </p>
       )}
-      <AssetGrid
-        assets={items}
-        selectedIds={selectedIds}
-        activeId={activeId}
-        onToggleSelect={onToggleSelect}
-        onOpen={onOpen}
-      />
-      <p className="feed__end muted">{total > items.length ? 'Loading more…' : 'End of results'}</p>
+      <AssetGrid assets={items} scrollRef={scrollRef} onNearEnd={onNearEnd} />
+      {isFetching && <p className="feed__end muted">Loading more…</p>}
+      {!hasNextPage && items.length > 0 && (
+        <p className="feed__end muted">End of results</p>
+      )}
     </div>
   );
-}
+});

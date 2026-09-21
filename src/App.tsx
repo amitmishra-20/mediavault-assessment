@@ -3,6 +3,7 @@ import { bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetFeed } from '@/features/assets/AssetFeed';
 import { useAssetFilters } from '@/features/assets/useAssetFilters';
+import { useAssetUi } from '@/features/assets/store';
 import { statusLabel } from '@/lib/format';
 import { apiMessage } from '@/lib/errors';
 import type { Asset, AssetStatus } from '@/lib/types';
@@ -17,12 +18,14 @@ const SORTS: Array<{ value: string; label: string }> = [
 
 export function App() {
   const { input, setInput, q, status, toggleStatus, sort, setSort } = useAssetFilters();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const selectedCount = useAssetUi((s) => s.selected.size);
+  const activeId = useAssetUi((s) => s.activeId);
+  const clearSelection = useAssetUi((s) => s.clear);
+  const closeDetail = useAssetUi((s) => s.close);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   async function applyBulkStatus(next: AssetStatus) {
-    const ids = [...selectedIds];
+    const ids = [...useAssetUi.getState().selected];
     if (ids.length === 0) return;
     setNotice(null);
     try {
@@ -31,7 +34,7 @@ export function App() {
         kind: result.failed > 0 ? 'error' : 'ok',
         text: `${result.applied} updated, ${result.failed} failed.`,
       });
-      setSelectedIds(new Set());
+      clearSelection();
     } catch (err) {
       setNotice({ kind: 'error', text: apiMessage(err) });
     }
@@ -79,15 +82,15 @@ export function App() {
         ))}
       </div>
 
-      {selectedIds.size > 0 && (
+      {selectedCount > 0 && (
         <div className="bulkbar">
-          <span>{selectedIds.size} selected</span>
+          <span>{selectedCount} selected</span>
           {STATUSES.map((s) => (
             <button key={s} onClick={() => applyBulkStatus(s)}>
               Set {statusLabel(s).toLowerCase()}
             </button>
           ))}
-          <button onClick={() => setSelectedIds(new Set())}>Clear selection</button>
+          <button onClick={() => clearSelection()}>Clear selection</button>
         </div>
       )}
 
@@ -98,22 +101,9 @@ export function App() {
       )}
 
       <main className="content">
-        <AssetFeed
-          query={{ q, status, sort }}
-          selectedIds={selectedIds}
-          activeId={activeId}
-          onToggleSelect={(id) =>
-            setSelectedIds((prev) => {
-              const next = new Set(prev);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            })
-          }
-          onOpen={setActiveId}
-        />
+        <AssetFeed query={{ q, status, sort }} />
         {activeId && (
-          <AssetDetail id={activeId} onClose={() => setActiveId(null)} onSaved={handleSaved} />
+          <AssetDetail id={activeId} onClose={closeDetail} onSaved={handleSaved} />
         )}
       </main>
     </div>
