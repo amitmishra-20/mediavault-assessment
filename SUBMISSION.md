@@ -26,7 +26,7 @@ vitest 3 are compatible).
 
 ~13h, roughly:
 - ~1.5h reading the brief, server source, and building the defect inventory.
-- ~2h harness + data layer + client (typed errors, retry policy, chunked reads).
+- ~2h harness + data layer + client (typed errors, retry policy).
 - ~3h Task 1 (race-proof search, URL state) incl. tests — real bugs found here
   (array-identity cancel key, RTL cleanup) shaped every later test.
 - ~2.5h Task 2 (virtualization, selection store, perf methodology + numbers).
@@ -41,13 +41,13 @@ vitest 3 are compatible).
 | # | Defect | Where | Fixed / left / out of scope |
 | --- | --- | --- | --- |
 | 1 | Bulk update sends every selected id in one call; API rejects >50 | `App.tsx` `applyBulkStatus` | fixed (chunked + pooled) |
-| 2 | Search race: an early slow response (`tra`) overwrites a newer query (`trail`) | `useAssets.ts` `.then` | fixed (keyed cache) |
+| 2 | Search race: an early slow response (`tra`) overwrites a newer query (`trail`) | `useAssets.ts` `.then` | fixed (query-key identity + abort) |
 | 3 | No debounce — every keystroke fires a request and trips the 80/10s rate limit | `App.tsx` `onChange` | fixed (300 ms debounce) |
 | 4 | No request cancellation; in-flight work keeps burning the rate budget | `useAssets.ts` effect cleanup absent | fixed (AbortSignal) |
 | 5 | Errors flattened to a string; cannot distinguish retryable from permanent | `client.ts` `request` | fixed (structured `ApiError`) |
 | 6 | No retry, no backoff, no jitter, `Retry-After` ignored (6% 503 / 12% write 500) | `client.ts` | fixed (retry policy) |
 | 7 | No de-duplication of identical concurrent requests | `client.ts` | fixed (Query cache dedup) |
-| 8 | `getAssetsByIds` ignores the 25-id batch cap | `client.ts` | fixed (chunked; unused by UI) |
+| 8 | `getAssetsByIds` ignores the 25-id batch cap | `client.ts` | avoided — the UI only ever requests one id (detail panel prev/next), so the cap never triggers |
 | 9 | Renders every fetched row; DOM grows with the dataset (12,400 items) | `AssetGrid.tsx` `.map` | fixed (virtualized) |
 | 10 | Selection toggle re-renders every card in the grid | `AssetGrid.tsx` / `App.tsx` state | fixed (zustand atomic selector + memo) |
 | 11 | Grid not keyboard-operable; cards are plain `div` with `onClick` | `AssetGrid.tsx:37` | fixed (roving tabindex grid) |
@@ -70,20 +70,23 @@ Rejected: writing a bespoke cache or wiring Astronaut's `useAssets` into a plain
 effect. The client wrapper (`src/api/client.ts`) is dependency-free Node/DOM
 `fetch` with structured errors, so the data layer has no framework coupling.
 
-**Stale response handling.** A manual "keyed cache" invariant in
-`src/features/assets/useAssetFeed.ts`: every in-flight query stores
-`{key, ...}` and the effect only applies a response if its key still matches
-the live input (query, status, sort) at resolution time. An AbortSignal from the
-previous key cancels the stale request outright. This closes the "`tra` resolves
-after `trail`" race *in addition to* the cache layer — defense in depth, because
-cancel is not guaranteed (the signal may arrive as the response lands).
+**Stale response handling.** In `src/features/assets/useAssetFeed.ts`, every
+query is keyed by a stable identity of (query, status, sort). A resolving
+response updates only its own query-key entry and can never publish into a
+different key — so an out-of-order response for a superseded filter is dropped
+by TanStack Query's query-key identity. The hook additionally
+`cancelQueries`s the key being left (via AbortSignal) so a stale in-flight
+request doesn't keep burning the rate budget. That pair — key identity + abort
+— closes the "`tra` resolves after `trail`" search race; defense in depth,
+because cancel is not guaranteed (the signal may arrive as the response lands).
 
 **Virtualization approach.** `@tanstack/react-virtual` with *rows as the virtual
-unit* rather than items. Fixed row height (~244 px, two-line names clamped)
-gives `useVirtualizer` a true offset-based estimate so there is no measurement
-jump while scrolling, `measureElement` corrects it in the background, and a
-`ResizeObserver` re-derives columns from real card width without a `window`
-resize listener. Rejected: infinite-scroll via `IntersectionObserver` (doesn't
+unit* rather than items. Cards are a fixed 244 px row height (140 px thumbnail +
+clamped two-line body), so the size estimator is a constant (`estimateSize: () =>
+ROW_HEIGHT`) and there's deliberately no `measureElement` hookup or measurement
+pass — rows never resize, so the offset math stays exact and nothing causes a
+measurement jump while scrolling. A `ResizeObserver` re-derives columns from
+real card width without a `window` resize listener. Rejected: infinite-scroll via `IntersectionObserver` (doesn't
 solve DOM growth), every-row-renders libraries like `react-window` grids were
 ruled out by the no-prebuilt-grid constraint. Virtualizer is ~9 kB gz of the
 bundle delta.
@@ -100,13 +103,14 @@ was chosen over pessimistic-lock disco because the API gives us no version lock
 on the bulk endpoint.
 
 **Retry and backoff policy.** One policy in `src/lib/retry.ts`, applied to both
-reads and writes: 3 attempts max, `Retry-After` honoured when present (503), else
-300 ms × attempt + jitter, `GET` only; 4xx (non-429) and `5xx` from host errors
-are terminal — those are our own bugs, not the server's. `429` is treated as
-retryable-after without the rate limit spinning forever (backoff grows past the
-window). Rejected: reflexively retrying everything (burns the rate budget twice)
-or using React Query's built-in retry (same hook, but one code path is easier to
-test than two knobs).
+reads and writes: 3 attempts max (1 initial + 2 retries), `Retry-After` honoured
+whenever the server sends it, else exponential backoff `500 ms × 2^attempt` with
+full jitter (×0.5–1.0), capped at 8 s — deliberately under the 10 s rate
+budget. Only `429`, `503`, `500`, and network-type failures (`TypeError`) are
+retried; `400`/`409`/`422` and everything else are terminal — those are our own
+bugs, not the server's. Rejected: reflexively retrying everything (burns the
+rate budget twice) or using React Query's built-in retry (same hook, but one
+code path is easier to test than two knobs).
 
 **State placement and URL sync.** Selection, focus, anchor, and bulk-busy live in
 a small zustand store (atomic selectors → only the toggled card re-renders; no
@@ -131,7 +135,7 @@ equivalent (dev server).
 | --- | --- | --- | --- |
 | Rendered DOM nodes at 600 rows loaded | ~1,400 (est., 600 naive cards) | **233** (27 cards, 9 rows) | CDP: scrolled feed until caption read "600 of 12,400 shown", then `document.getElementsByTagName('*').length` |
 | Cards re-rendered when toggling one selection | All ~28 visible cards (App-level `Set` state) | **1** (the toggled card), by construction | zustand atomic selector `useAssetUi(s => s.selected.has(id))` + `memo`; append/toggle re-renders only subscribers |
-| Production bundle, gzipped | 48.30 kB | **85.10 kB** (264 kB raw) | `vite build`: baseline vs current. Delta = TanStack Query + Router + zustand + virtual-core (~37 kB gz). CSS 7.12 kB raw / 2.28 kB gz on top |
+| Production bundle, gzipped | 48.30 kB | **85.68 kB** (267 kB raw) | `vite build`: baseline vs current. Delta = TanStack Query + Router + zustand + virtual-core (~37 kB gz). CSS 19.97 kB raw / 5.08 kB gz on top |
 | Requests fired while typing a 6-char query | 6 (one per keystroke) | **1** | vitest: 300 ms debounce + coalescing assertion (no `q=tra` request when typing `trail`) |
 | Longest task during sustained scroll | — | **81 ms** (2 long tasks, 133 ms total over 40 scroll cycles) | `PerformanceObserver('longtask')` during the CDP scroll loop |
 
@@ -171,8 +175,9 @@ lead card instead of leaving focus stranded on a card that no longer exists. A
 inputs sit inside each card for assistive-tech selection.
 
 **How it was tested.** 4 keyboard tests in `keyboard.test.tsx` (roving
-tabindex, Shift+Arrow multi-select with a fixed anchor, focus-clear on feed
-reset, focus-return after detail close), the full 27-test suite, plus a manual
+tabindex + arrow movement, Shift+Arrow multi-select anchored at the last
+toggle, panel open → Escape returning focus to the originating card, and the
+`sr-only` live-region announcement), the full 27-test suite, plus a manual
 pass against a real browser grid before Task 5 landed. No screen-reader pass —
 dev-only. The mock row layout (1200×800) also means tests pin columns=5, so the
 grid math is asserted, not just arrows.
@@ -271,8 +276,8 @@ radius, or spacing inline.
 
 ## Anything you would like us to look at
 
-1. **`useAssetFeed.ts` keyed-cache invariant** (`src/features/assets/useAssetFeed.ts`)
-   — the double-guard (cache-key equality + abort) that closes the
+1. **`useAssetFeed.ts` stale-response guard** (`src/features/assets/useAssetFeed.ts`)
+   — query-key identity + `cancelQueries` on key leave, which together close the
    search race; I'd like a reviewer to stress this against a mock server.
 2. **`bulk.ts` overlay/apply/rollback** (`src/features/assets/bulk.ts`) — the
    store-level optimistic overlay with patch-and-replay: I believe it's
