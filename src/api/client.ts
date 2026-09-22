@@ -3,6 +3,8 @@ import type { Asset, AssetPage, AssetQuery, BulkResult, AssetStatus } from '@/li
 
 /** Single-shot API client: throws ApiError, honours AbortSignal; retries live one layer up. */
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+
 function toSearchParams(query: AssetQuery): string {
   const params = new URLSearchParams();
   if (query.q) params.set('q', query.q);
@@ -37,7 +39,7 @@ async function errorBody(res: Response): Promise<{ code?: string; message?: stri
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
       signal: init?.signal,
@@ -91,4 +93,4 @@ export function bulkSetStatus(ids: string[], status: AssetStatus): Promise<BulkR
   });
 }
 
-export const thumbnailUrl = (id: string) => `/api/thumb/${id}.svg`;
+export const thumbnailUrl = (id: string) => `${API_BASE}/api/thumb/${id}.svg`;
